@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import scipy
 
+
 columns = ['coordinate_x', 'coordinate_y', 'displacement_x', 'displacement_y', 'load_x', 'load_y']
 data = [[0,0,0,0,np.nan,np.nan],
         [10,0,np.nan,np.nan,0,-100],
@@ -235,40 +236,93 @@ def transition_matrix_Newmark_Beta(M, K, deltaT, beta=1/4, gamma=1/2):
 
 def force_matrix_Newmark_Beta(M, K, deltaT, beta=1/4, gamma=1/2):
   M_new = 1/(beta*deltaT*deltaT)*M+K
-  M_hat = np.dot(np.linalg.inv(M_new), M)
 
-  B1 = np.linalg.inv(M_hat)
-  B2 = gamma/(beta*deltaT)*np.linalg.inv(M_hat)
-  B3 = gamma/(beta*deltaT**2)*np.linalg.inv(M_hat)
+  B1 = np.linalg.inv(M_new)
+  B2 = gamma/(beta*deltaT)*np.linalg.inv(M_new)
+  B3 = gamma/(beta*deltaT**2)*np.linalg.inv(M_new)
 
   B = np.vstack((B1, B2, B3))
   return B
 
 def generate_pseudo_data(x, T, factor):
-  y = np.zeros(T+1)
-  for i in range(int(np.shape(x)[0]/3)):
-    y_i = x[i,:] + np.random.normal(0, factor*np.std(x[i,:]), T+1)
+  y = np.zeros(T)
+  for i in range(np.shape(x)[0]):
+    y_i = x[i,:] + np.random.normal(0, factor*np.std(x[i,:]), T)
     y = np.vstack((y, y_i))
   return np.delete(y, (0), axis=0)
 
-def Kalman_filter(A, B, x, f, y, sigma_0, sigma_r, sigma_q, T):
+def observe_displacements(A):
+  H = np.hstack((np.identity(int(np.shape(A)[0]/3)), np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3))), np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3)))))
+  return H
+
+def Kalman_filter(A, B, H, x, f, y, sigma_0, sigma_r, sigma_q, T):
   Q = sigma_q*np.identity(np.shape(A)[0])
   R = sigma_r*np.identity(np.shape(y)[0])
-  H = np.hstack((np.identity(int(np.shape(A)[0]/3)), np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3))), np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3)))))
   
   P = [sigma_0*np.identity(np.shape(A)[0])]
+
+  energy = 0
 
   for i in range(T-1):
     x_predict = np.dot(A, x[:,i]) + np.dot(B, f[:,i+1])
     P_predict = np.dot(A, np.dot(P[i], np.transpose(A))) + Q
     V = y[:,i] - np.dot(H, x_predict)
-    S = np.dot(H, np.dot(P_predict, np.transpose(H))) + sigma_r
+    S = np.dot(H, np.dot(P_predict, np.transpose(H))) + R
     K = np.dot(P_predict, np.dot(np.transpose(H), np.linalg.inv(S)))
     x_estimate = x_predict + np.dot(K, V)
     P_estimate = P_predict - np.dot(K, np.dot(S, np.transpose(K)))
 
     x = np.append(x, x_estimate.reshape(np.shape(A)[0],1), axis=1)
     P.append(P_estimate)
+   
+    energy += 0.5*np.log(np.linalg.det(2*np.pi*S))+0.5*np.dot(np.transpose(V), np.dot(np.linalg.inv(S), V))
 
-  return x
+  return x, energy
 
+
+def Metropolis_Hasting(A, B, H, x, force_func, y, sigma_0, sigma_r, sigma_q, prior_mean, prior_var, proposal_var, T, N):
+  x_init = x
+  X = []
+
+  param = []
+  param.append(np.random.normal(prior_mean, prior_var))
+
+  energy_list = []
+
+  f = force_func(param[0], T)
+  phi = 0.5*np.log(2*np.pi*prior_var)+1/(2*prior_var**2)*(param[0]-prior_mean)
+  x, energy = Kalman_filter(A, B, H, x_init, f, y, sigma_0, sigma_r, sigma_q, T)
+  X.append(x)
+  phi += energy
+  energy_list.append(phi)
+  for j in range(1,N):
+    proposal = np.random.normal(param[j-1], proposal_var)
+    f = force_func(param[j-1], T)
+    phi = 0.5*np.log(2*np.pi*prior_var)+1/(2*prior_var**2)*(proposal-prior_mean)
+    x, energy = Kalman_filter(A, B, H, x_init, f, y, sigma_0, sigma_r, sigma_q, T)
+    X.append(x)
+    phi += energy
+
+    acceptance = np.exp(min(0, (energy_list[j-1]-phi)))
+    uniform = np.random.uniform(0,1)
+    if uniform <= acceptance:
+      param.append(proposal)
+      energy_list.append(phi)
+    else:
+      param.append(param[j-1])
+      energy_list.append(energy_list[j-1])
+  return param, energy_list, X
+
+def sinusoidal_force(param, T):
+  force = []
+  for i in range(T):
+    force_val = -100 + param*np.sin(2*np.pi*i/10)
+    force.append(force_val)
+  return np.vstack((np.zeros(T), force, np.zeros((4,T))))
+
+def constant_force(param, T):
+  force = np.ones(T)*param
+  return np.tile(force, (6,1))
+
+def random_force(param, T):
+  return np.tile(np.array(np.random.normal(param,1, (6,1))), (1,T))

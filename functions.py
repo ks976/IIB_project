@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy
+from scipy.spatial import distance_matrix
+from tqdm import tqdm
 
 
 columns = ['coordinate_x', 'coordinate_y', 'displacement_x', 'displacement_y', 'load_x', 'load_y']
@@ -279,10 +281,27 @@ def Kalman_filter(A, B, H, x, f, y, sigma_0, sigma_r, sigma_q, T):
 
   return x, energy
 
+def aug_lin_model(A, B, H, x, theta):
+  A12 = np.zeros((len(x),len(theta)))
+  A21 = np.transpose(A12)
+  A22 = np.identity(len(theta))
+  A1 = np.hstack((A,A12))
+  A2 = np.hstack((A21,A22))
+  A_aug = np.vstack((A1,A2))
 
-def Metropolis_Hasting(A, B, H, x, force_func, y, sigma_0, sigma_r, sigma_q, prior_mean, prior_var, proposal_var, T, N):
+  B2 = np.zeros((len(theta),int(len(x)/3)))
+  B_aug = np.vstack((B,B2))
+
+  H2 = np.zeros((np.shape(H)[0],len(theta)))
+  H_aug = np.hstack((H,H2))
+  return A_aug, B_aug, H_aug
+
+
+
+def Metropolis_Hastings(A, B, H, x, force_func, y, sigma_0, sigma_r, sigma_q, prior_mean, prior_var, beta, T, N, method):
   x_init = x
   X = []
+  acc = 0
 
   param = []
   param.append(np.random.normal(prior_mean, prior_var))
@@ -290,28 +309,33 @@ def Metropolis_Hasting(A, B, H, x, force_func, y, sigma_0, sigma_r, sigma_q, pri
   energy_list = []
 
   f = force_func(param[0], T)
-  phi = 0.5*np.log(2*np.pi*prior_var)+1/(2*prior_var**2)*(param[0]-prior_mean)
+  phi = 0.5*np.log(2*np.pi*prior_var)+1/(2*prior_var**2)*(param[0]-prior_mean)**2
   x, energy = Kalman_filter(A, B, H, x_init, f, y, sigma_0, sigma_r, sigma_q, T)
   X.append(x)
   phi += energy
   energy_list.append(phi)
-  for j in range(1,N):
-    proposal = np.random.normal(param[j-1], proposal_var)
-    f = force_func(param[j-1], T)
-    phi = 0.5*np.log(2*np.pi*prior_var)+1/(2*prior_var**2)*(proposal-prior_mean)
+  for j in tqdm(range(1,N)):
+    if method == 'pcn':
+      proposal = np.sqrt(1-beta**2)*param[j-1] + beta*np.random.normal(0, prior_var)
+      phi = 0
+    elif method == 'grw':
+      proposal = param[j-1] + beta*np.random.normal(0, prior_var)
+      phi = 0.5*np.log(2*np.pi*prior_var)+1/(2*prior_var**2)*(proposal-prior_mean)**2
+    f = force_func(proposal, T)
     x, energy = Kalman_filter(A, B, H, x_init, f, y, sigma_0, sigma_r, sigma_q, T)
     X.append(x)
     phi += energy
 
-    acceptance = np.exp(min(0, (energy_list[j-1]-phi)))
+    acceptance = min(0, (energy_list[j-1]-phi))
     uniform = np.random.uniform(0,1)
-    if uniform <= acceptance:
+    if np.log(uniform) <= acceptance:
+      acc += 1
       param.append(proposal)
       energy_list.append(phi)
     else:
       param.append(param[j-1])
       energy_list.append(energy_list[j-1])
-  return param, energy_list, X
+  return param, energy_list, X, acc/N
 
 def sinusoidal_force(param, T):
   force = []
@@ -326,3 +350,11 @@ def constant_force(param, T):
 
 def random_force(param, T):
   return np.tile(np.array(np.random.normal(param,1, (6,1))), (1,T))
+
+def AR_1(param, T):
+  force = np.random.normal(-100, 0, (6,1))
+  for i in range(1,T):
+    f_new = param*force[:,i-1]
+    f_new = f_new.reshape(6,1) + np.random.normal(0,10, (6,1))
+    force = np.append(force, f_new.reshape(6,1), axis=1)
+  return force

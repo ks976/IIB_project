@@ -257,6 +257,11 @@ def observe_displacements(A):
   H = np.hstack((np.identity(int(np.shape(A)[0]/3)), np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3))), np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3)))))
   return H
 
+def observe_accelerations(A):
+  H = np.hstack((np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3))), np.zeros((int(np.shape(A)[0]/3),int(np.shape(A)[0]/3))), np.identity(int(np.shape(A)[0]/3))))
+  return H
+
+
 def Kalman_filter(A, B, H, x, f, y, sigma_0, sigma_r, sigma_q, T):
   Q = sigma_q*np.identity(np.shape(A)[0])
   R = sigma_r*np.identity(np.shape(y)[0])
@@ -349,12 +354,12 @@ def constant_force(param, T):
   return np.tile(force, (6,1))
 
 def random_force(param, T):
-  return np.tile(np.array(np.random.normal(param,1, (6,1))), (1,T))
+  return np.random.normal(param, 50, (6,T))
 
 def AR_1(param, T):
-  force = np.random.normal(-100, 0, (6,1))
+  force = np.random.normal(-500, 100, (6,1))
   for i in range(1,T):
     f_new = param*force[:,i-1]
-    f_new = f_new.reshape(6,1) + np.random.normal(0,10, (6,1))
+    f_new = f_new.reshape(6,1) + np.random.normal(0, 100, (6,1))
     force = np.append(force, f_new.reshape(6,1), axis=1)
   return force
